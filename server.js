@@ -1,14 +1,24 @@
 import express from 'express';
+import cors from 'cors';
 import { AzureChatOpenAI } from '@langchain/openai';
+
+const app = express();
+
+
+app.use(cors({
+    origin: true,
+    methods: ['POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type'],
+    credentials: false
+}));
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 const model = new AzureChatOpenAI({
     temperature: 0.7,
     streaming: true,
 });
-
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 let messageHistory = [];
 let isProcessingRequest = false;
