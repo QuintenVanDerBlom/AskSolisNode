@@ -9,20 +9,24 @@ const model = new AzureChatOpenAI({
 
 const app = express();
 
+// CORS configuration
 const corsOptions = {
-    origin: '*', 
+    origin: '*',
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true,
-    optionsSuccessStatus: 200
+    allowedHeaders: ['Content-Type', 'Accept'],
+    exposedHeaders: ['Content-Type'],
+    credentials: false,
+    maxAge: 86400
 };
 
+// Apply CORS middleware
 app.use(cors(corsOptions));
+
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-
-app.options('*', cors(corsOptions));
 
 let messageHistory = [];
 let isProcessingRequest = false;
@@ -65,7 +69,7 @@ async function fetchWikiInfo(query) {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', cors(corsOptions), async (req, res) => {
     try {
         if (isProcessingRequest) {
             return res.status(429).json({ 
@@ -101,6 +105,9 @@ app.post('/api/chat', async (req, res) => {
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
 
         let fullResponse = '';
         
