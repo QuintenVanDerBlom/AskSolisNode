@@ -2,35 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import { AzureChatOpenAI } from '@langchain/openai';
 
-const app = express();
-
-// CORS wrapper function as recommended by Vercel
-const allowCors = fn => async (req, res) => {
-    res.setHeader('Access-Control-Allow-Credentials', true);
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-    res.setHeader(
-        'Access-Control-Allow-Headers',
-        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
-    );
-
-    if (req.method === 'OPTIONS') {
-        res.status(200).end();
-        return;
-    }
-
-    return await fn(req, res);
-};
-
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 const model = new AzureChatOpenAI({
     temperature: 0.7,
     streaming: true,
 });
 
+const app = express();
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
 let messageHistory = [];
+
 let isProcessingRequest = false;
 
 async function fetchWikiInfo(query) {
@@ -71,7 +54,7 @@ async function fetchWikiInfo(query) {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-const handler = async (req, res) => {
+app.post('/', async (req, res) => {
     try {
         if (isProcessingRequest) {
             return res.status(429).json({ 
@@ -126,15 +109,15 @@ const handler = async (req, res) => {
 
         messageHistory.push({ role: 'assistant', content: fullResponse });
 
+        // End the stream
         res.write('data: [DONE]\n\n');
         res.end();
     } catch (error) {
-        console.error('Error in POST /api/chat:', error);
+        console.error('Error in POST /:', error);
         res.status(500).json({ error: 'Failed to process prompt', history: messageHistory });
     } finally {
         isProcessingRequest = false;
     }
-};
+});
 
-// Export the wrapped handler
-export default allowCors(handler);
+app.listen(3000, () => console.log('App listening on port 3000!'));
