@@ -8,9 +8,21 @@ const model = new AzureChatOpenAI({
 });
 
 const app = express();
-app.use(cors());
+
+const corsOptions = {
+    origin: '*', 
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+
+app.options('*', cors(corsOptions));
 
 let messageHistory = [];
 let isProcessingRequest = false;
