@@ -4,13 +4,23 @@ import { AzureChatOpenAI } from '@langchain/openai';
 
 const app = express();
 
+// CORS wrapper function as recommended by Vercel
+const allowCors = fn => async (req, res) => {
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
 
-app.use(cors({
-    origin: true,
-    methods: ['POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type'],
-    credentials: false
-}));
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
+    return await fn(req, res);
+};
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -61,7 +71,7 @@ async function fetchWikiInfo(query) {
 
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-app.post('/api/chat', async (req, res) => {
+const handler = async (req, res) => {
     try {
         if (isProcessingRequest) {
             return res.status(429).json({ 
@@ -124,6 +134,7 @@ app.post('/api/chat', async (req, res) => {
     } finally {
         isProcessingRequest = false;
     }
-});
+};
 
-export default app;
+// Export the wrapped handler
+export default allowCors(handler);
