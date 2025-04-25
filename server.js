@@ -3,7 +3,8 @@ import cors from 'cors';
 import { AzureChatOpenAI } from '@langchain/openai';
 
 const model = new AzureChatOpenAI({
-    temperature: 1,
+    temperature: 0.7,
+    streaming: true,
 });
 
 const app = express();
@@ -11,71 +12,111 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// List of keywords related to nature and plants
-const natureKeywords = [
-    'nature', 'plant', 'tree', 'forest', 'flower', 'leaf', 'grass', 'garden',
-    'ecosystem', 'wildlife', 'botany', 'flora', 'fauna', 'environment', 'soil',
-    'photosynthesis', 'rainforest', 'desert', 'mountain', 'river', 'ocean',
-    'animal', 'bird', 'insect', 'climate', 'biodiversity', 'conservation'
-];
-
-// In-memory message history
 let messageHistory = [];
+let isProcessingRequest = false;
 
-// Function to check if the prompt is related to nature or plants
-function isNatureRelated(prompt) {
-    const lowerPrompt = prompt.toLowerCase();
-    return natureKeywords.some(keyword => lowerPrompt.includes(keyword));
-}
-
-app.get('/', async (req, res) => {
+async function fetchWikiInfo(query) {
     try {
-        const result = await tellJoke();
-        res.json({ message: result, history: messageHistory });
-    } catch (error) {
-        console.error('Error in GET /:', error);
-        res.status(500).json({ error: 'Failed to fetch joke' });
-    }
-});
-
-app.post('/', async (req, res) => {
-    try {
-        const prompt = req.body.prompt;
-        if (!prompt) {
-            return res.status(400).json({ error: 'Prompt is required', history: messageHistory });
+        const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&origin=*`;
+        const searchResponse = await fetch(searchUrl);
+        const searchData = await searchResponse.json();
+        
+        console.log('Wikipedia Search Results:', searchData.query.search);
+        
+        if (!searchData.query.search.length) {
+            return null;
         }
 
-        // Check if the prompt is nature/plant-related
-        if (!isNatureRelated(prompt)) {
-            const errorMessage = 'Sorry, I can only answer questions related to nature and plants. Please ask about topics like plants, trees, wildlife, or the environment.';
-            messageHistory.push({ prompt, response: errorMessage });
-            return res.status(400).json({ message: errorMessage, history: messageHistory });
+        const pageId = searchData.query.search[0].pageid;
+        
+        const contentUrl = `https://en.wikipedia.org/w/api.php?action=query&prop=extracts|info&pageids=${pageId}&inprop=url&format=json&origin=*&exintro=1&explaintext=1`;
+        const contentResponse = await fetch(contentUrl);
+        const contentData = await contentResponse.json();
+        
+        const page = contentData.query.pages[pageId];
+        console.log('Wikipedia Page Data:', {
+            title: page.title,
+            extract: page.extract,
+            url: page.fullurl
+        });
+
+        return {
+            title: page.title,
+            extract: page.extract,
+            url: page.fullurl
+        };
+    } catch (error) {
+        console.error('Error fetching Wikipedia data:', error);
+        return null;
+    }
+}
+
+const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+app.post('/api/chat', async (req, res) => {
+    try {
+        if (isProcessingRequest) {
+            return res.status(429).json({ 
+                error: 'Please wait for the previous request to complete before sending a new one.',
+                history: messageHistory 
+            });
+        }
+
+        isProcessingRequest = true;
+
+        const prompt = req.body.prompt;
+        if (!prompt) {
+            isProcessingRequest = false;
+            return res.status(400).json({ error: 'Prompt is required', history: messageHistory });
         }
 
         console.log('The user asked for:', prompt);
 
-        // Create context with message history
-        const historyContext = messageHistory
-            .map(({ prompt, response }) => `User: ${prompt}\nBot: ${response}`)
-            .join('\n\n');
-        const fullPrompt = `${historyContext}\n\nUser: Answer the following question about nature or plants: ${prompt}`;
+        messageHistory.push({ role: 'user', content: prompt });
 
-        const result = await model.invoke(fullPrompt);
-        const responseMessage = result.content;
+        const wikiInfo = await fetchWikiInfo(prompt);
+        
+        const formattedHistory = messageHistory.map(msg => 
+            `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`
+        ).join('\n\n');
 
-        // Add to message history
-        messageHistory.push({ prompt, response: responseMessage });
+        let fullPrompt = formattedHistory;
+        if (wikiInfo) {
+            fullPrompt += `\n\nHere is some information from Wikipedia about ${wikiInfo.title}:\n${wikiInfo.extract}\n\nBased on this information and our conversation history, please provide a helpful response. Always include the Wikipedia source URL in your response.`;
+        }
+        fullPrompt += '\n\nAssistant:';
 
-        res.json({ message: responseMessage, history: messageHistory });
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        let fullResponse = '';
+        
+        const stream = await model.stream(fullPrompt);
+        for await (const chunk of stream) {
+            const content = chunk.content;
+            if (content) {
+                fullResponse += content;
+                res.write(`data: ${JSON.stringify({ content })}\n\n`);
+                await delay(Math.floor(Math.random() * 30) + 20);
+            }
+        }
+
+        if (wikiInfo) {
+            fullResponse += `\n\nSource: [${wikiInfo.title} on Wikipedia](${wikiInfo.url})`;
+        }
+
+        messageHistory.push({ role: 'assistant', content: fullResponse });
+
+        res.write('data: [DONE]\n\n');
+        res.end();
     } catch (error) {
-        console.error('Error in POST /:', error);
+        console.error('Error in POST /api/chat:', error);
         res.status(500).json({ error: 'Failed to process prompt', history: messageHistory });
+    } finally {
+        isProcessingRequest = false;
     }
 });
 
-async function tellJoke() {
-    const joke = await model.invoke('Tell me a joke about plants or nature!');
-    return joke.content;
-}
-
-app.listen(3000, () => console.log('App listening on port 3000!'));
+// Export the Express API
+export default app;
